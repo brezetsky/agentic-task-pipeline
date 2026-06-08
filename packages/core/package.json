@@ -20,6 +20,8 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.0",
+    "ai": "^6.0.0",
     "dotenv": "^16.4.7",
     "zod": "^4.4.3"
   }
