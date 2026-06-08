@@ -4,7 +4,7 @@
  * on env. Implementations live in @pipeline/core but are imported only by the
  * API and the worker's ACTIVITIES — never by workflow code.
  */
-import type { Analysis, Plan, Task } from '../contracts/index.js';
+import type { Analysis, Plan, PrResult, Task } from '../contracts/index.js';
 
 export interface PlanArgs {
   task: Task;
@@ -26,4 +26,17 @@ export interface BoardProvider {
   getTask(id: string): Promise<Task | null>;
   /** Post a status comment back to the board card (best-effort). */
   comment(taskId: string, text: string): Promise<void>;
+}
+
+export interface OpenPrArgs {
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+}
+
+/** Opens (or finds) a pull request for a pushed branch. */
+export interface PrProvider {
+  readonly name: string;
+  openPr(args: OpenPrArgs): Promise<PrResult>;
 }

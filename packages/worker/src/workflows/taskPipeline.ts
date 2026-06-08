@@ -22,11 +22,24 @@ import type {
 import { getStatus, submitDecision } from './signals.js';
 
 const acts = proxyActivities<typeof activities>({
-  startToCloseTimeout: '2 minutes',
+  startToCloseTimeout: '5 minutes',
   retry: {
     initialInterval: '1 second',
     backoffCoefficient: 2,
     maximumAttempts: 3,
+    // PR client errors (bad token, etc.) should fail fast, not retry.
+    nonRetryableErrorTypes: ['PrError'],
+  },
+});
+
+// Tests can run long; heartbeat keeps them alive and detects a dead worker fast.
+const longActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '15 minutes',
+  heartbeatTimeout: '1 minute',
+  retry: {
+    initialInterval: '2 seconds',
+    backoffCoefficient: 2,
+    maximumAttempts: 2,
   },
 });
 
@@ -124,7 +137,7 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
     branch = impl.branch;
 
     go('testing');
-    const test = await acts.runTests({ runId, testCommand: approvedPlan.testCommand });
+    const test = await longActs.runTests({ runId, testCommand: approvedPlan.testCommand });
     testsPassed = test.passed;
     if (!test.passed) {
       error = test.summary;

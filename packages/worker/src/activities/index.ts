@@ -1,11 +1,19 @@
 /**
- * Activities = every side-effecting step. Analyze + plan now delegate to the
- * env-driven LLM provider (real Gemini when GOOGLE_GENERATIVE_AI_API_KEY is set,
- * deterministic stub otherwise). Implement/test/PR/report remain stubs until
- * Phase 5. Activities run on the worker (normal Node); workflow code references
- * them by type only.
+ * Activities = every side-effecting step, each delegating to an env-driven
+ * provider in @pipeline/core (real when credentials are present, mock/simulated
+ * otherwise). Activities run on the worker (normal Node); workflow code
+ * references them by type only.
  */
-import { createLlmProvider, loadConfig } from '@pipeline/core';
+import { Context } from '@temporalio/activity';
+import {
+  GitWorkspace,
+  createBoardProvider,
+  createLlmProvider,
+  createPrProvider,
+  loadConfig,
+  runTestCommand,
+  workspaceDir,
+} from '@pipeline/core';
 import type {
   Analysis,
   ImplementResult,
@@ -29,21 +37,23 @@ export interface ImplementArgs {
   plan: Plan;
   runId: string;
 }
-export async function implementPlan({ plan, runId }: ImplementArgs): Promise<ImplementResult> {
-  // Phase 5 applies plan.edits to a real working copy. For now, simulate.
-  return {
-    branch: `agent/${runId}`,
-    filesChanged: plan.edits.map((e) => e.path),
-  };
+export async function implementPlan({ task, plan, runId }: ImplementArgs): Promise<ImplementResult> {
+  const cfg = loadConfig();
+  const branch = `agent/${runId}`;
+  const message = `agent: ${task.title}\n\n${plan.summary}`;
+  return new GitWorkspace(cfg).implement({ runId, branch, edits: plan.edits, message });
 }
 
 export interface RunTestsArgs {
   runId: string;
   testCommand: string;
 }
-export async function runTests({ testCommand }: RunTestsArgs): Promise<TestResult> {
-  // Phase 5 runs the real command in the working copy.
-  return { passed: true, summary: `Ran "${testCommand}" — all tests passed (stub).` };
+export async function runTests({ runId, testCommand }: RunTestsArgs): Promise<TestResult> {
+  const ctx = Context.current();
+  return runTestCommand(workspaceDir(runId), testCommand, {
+    signal: ctx.cancellationSignal,
+    onLine: (line) => ctx.heartbeat(line),
+  });
 }
 
 export interface OpenPrArgs {
@@ -52,13 +62,24 @@ export interface OpenPrArgs {
   branch: string;
   runId: string;
 }
-export async function openPullRequest({ task, runId }: OpenPrArgs): Promise<PrResult> {
-  // Phase 5 opens a real PR via the GitHub API when configured.
-  return {
-    url: `https://example.invalid/pull/${runId}`,
-    title: task.title,
-    simulated: true,
-  };
+export async function openPullRequest({ task, plan, branch, runId }: OpenPrArgs): Promise<PrResult> {
+  const cfg = loadConfig();
+  const body = [
+    `### ${task.title}`,
+    '',
+    plan.summary,
+    '',
+    '**Plan**',
+    ...plan.steps.map((s) => `- ${s}`),
+    '',
+    `_Opened by Agent Pipeline · run \`${runId}\`._`,
+  ].join('\n');
+  return createPrProvider(cfg).openPr({
+    branch,
+    base: cfg.github.baseBranch,
+    title: `agent: ${task.title}`,
+    body,
+  });
 }
 
 export interface ReportArgs {
@@ -68,9 +89,10 @@ export interface ReportArgs {
   branch?: string;
   testsPassed?: boolean;
 }
-export async function reportResult(args: ReportArgs): Promise<void> {
-  // eslint-disable-next-line no-console
-  console.log(
-    `[report] run ${args.runId} "${args.task.title}": pr=${args.prUrl ?? 'n/a'} branch=${args.branch ?? 'n/a'} tests=${args.testsPassed}`,
-  );
+export async function reportResult({ task, runId, prUrl, branch, testsPassed }: ReportArgs): Promise<void> {
+  const board = createBoardProvider(loadConfig());
+  const text = `Agent Pipeline run ${runId}: ${prUrl ? `PR ${prUrl}` : 'no PR'}, tests ${
+    testsPassed ? 'passed ✅' : 'failed ❌'
+  }${branch ? `, branch ${branch}` : ''}.`;
+  await board.comment(task.id, text).catch(() => undefined);
 }
