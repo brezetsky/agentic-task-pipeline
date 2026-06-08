@@ -1,6 +1,13 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import express from 'express';
-import { loadConfig } from '@pipeline/core';
-import type { RunStatus } from '@pipeline/core/contracts';
+import { createBoardProvider, loadConfig, loadEnv } from '@pipeline/core';
+import type { Decision, Task } from '@pipeline/core';
+import { getRunStatus, listRuns, sendDecision, startRun } from './temporal.js';
+
+loadEnv();
+const cfg = loadConfig();
+const board = createBoardProvider(cfg);
 
 export const app = express();
 app.use(express.json());
@@ -9,12 +16,131 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'agent-pipeline-api' });
 });
 
-// Real routes (POST /runs, GET /runs, GET /runs/:id, POST /runs/:id/decision,
-// GET /runs/:id/events SSE) are added in Phase 3.
-export type ApiRunStatus = RunStatus;
+/** Which integrations are live vs mocked (drives the UI mode badge). */
+app.get('/api/info', (_req, res) => {
+  res.json({
+    mode: cfg.llm.enabled || cfg.board.enabled || cfg.github.enabled ? 'live' : 'mock',
+    integrations: {
+      llm: cfg.llm.enabled ? `gemini:${cfg.llm.model}` : 'stub',
+      board: cfg.board.enabled ? 'trello' : 'mock',
+      github: cfg.github.enabled ? `${cfg.github.owner}/${cfg.github.repo}` : 'simulated',
+    },
+    maxRevisions: cfg.maxRevisions,
+  });
+});
+
+/** Inbound queue: tasks available on the board. */
+app.get('/api/board/tasks', async (_req, res, next) => {
+  try {
+    res.json(await board.listTasks());
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Start a run from a board task id, or from a task supplied in the body. */
+app.post('/api/runs', async (req, res, next) => {
+  try {
+    const body = (req.body ?? {}) as { taskId?: string; task?: Task };
+    let task: Task | null = body.task ?? null;
+    if (!task && body.taskId) task = await board.getTask(String(body.taskId));
+    if (!task) {
+      res.status(400).json({ error: 'provide { taskId } or { task }' });
+      return;
+    }
+    const runId = await startRun(cfg, task);
+    res.status(201).json({ runId });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** All pipeline runs (active + recent). */
+app.get('/api/runs', async (_req, res, next) => {
+  try {
+    res.json(await listRuns(cfg));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** One run's live status. */
+app.get('/api/runs/:id', async (req, res, next) => {
+  try {
+    const status = await getRunStatus(cfg, req.params.id);
+    if (!status) {
+      res.status(404).json({ error: 'run not found, or worker unavailable' });
+      return;
+    }
+    res.json(status);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Relay a human decision into the paused workflow (durable signal). */
+app.post('/api/runs/:id/decision', async (req, res, next) => {
+  try {
+    const { kind, feedback } = (req.body ?? {}) as { kind?: string; feedback?: string };
+    if (kind !== 'approve' && kind !== 'request-changes') {
+      res.status(400).json({ error: "kind must be 'approve' or 'request-changes'" });
+      return;
+    }
+    const decision: Decision = { kind, feedback };
+    await sendDecision(cfg, req.params.id, decision);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Server-Sent Events: poll the workflow's status and stream it to the UI. */
+app.get('/api/runs/:id/events', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  let closed = false;
+  req.on('close', () => {
+    closed = true;
+  });
+  const terminal = new Set(['completed', 'failed', 'rejected']);
+
+  while (!closed) {
+    const status = await getRunStatus(cfg, req.params.id).catch(() => null);
+    if (status) {
+      res.write(`data: ${JSON.stringify(status)}\n\n`);
+      if (terminal.has(status.state)) break;
+    } else {
+      res.write('event: pending\ndata: {}\n\n');
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  res.end();
+});
+
+// Serve the built SPA from the same origin in production (no CORS needed).
+const webDist = resolve(__dirname, '../../web/dist');
+if (existsSync(webDist)) {
+  app.use(express.static(webDist));
+  const indexHtml = resolve(webDist, 'index.html');
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api') && existsSync(indexHtml)) {
+      res.sendFile(indexHtml);
+    } else {
+      next();
+    }
+  });
+}
+
+// Error handler.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[api] error', err);
+  res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+});
 
 if (require.main === module) {
-  const cfg = loadConfig();
   app.listen(cfg.api.port, () => {
     console.log(`[api] listening on http://localhost:${cfg.api.port}`);
   });

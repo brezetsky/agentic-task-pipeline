@@ -18,3 +18,12 @@ export interface LlmProvider {
   analyze(task: Task): Promise<Analysis>;
   plan(args: PlanArgs): Promise<Plan>;
 }
+
+/** Task board (Trello or mock) — the inbound source of work. */
+export interface BoardProvider {
+  readonly name: string;
+  listTasks(): Promise<Task[]>;
+  getTask(id: string): Promise<Task | null>;
+  /** Post a status comment back to the board card (best-effort). */
+  comment(taskId: string, text: string): Promise<void>;
+}

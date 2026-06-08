@@ -141,3 +141,11 @@ export const StartRunInputSchema = z.object({
   autoApprove: z.boolean().optional(),
 });
 export type StartRunInput = z.infer<typeof StartRunInputSchema>;
+
+// --- Temporal wiring names (shared so the API/CLI and worker never drift) ---
+export const WORKFLOW_TYPE = 'taskPipeline';
+export const SIGNAL_SUBMIT_DECISION = 'submitDecision';
+export const QUERY_GET_STATUS = 'getStatus';
+
+/** Signature of the pipeline workflow (for type-safe client calls by name). */
+export type TaskPipelineWorkflow = (input: StartRunInput) => Promise<RunResult>;
