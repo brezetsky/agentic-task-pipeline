@@ -1,0 +1,27 @@
+{
+  "name": "agent-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Durable, human-in-the-loop agentic task pipeline (board -> plan -> approve -> implement -> test -> PR).",
+  "engines": { "node": ">=20" },
+  "workspaces": [
+    "packages/core",
+    "packages/worker",
+    "packages/api",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b && npm run typecheck -w @pipeline/web",
+    "test": "vitest run",
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo .work .temporal"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "^1.17.2",
+    "@types/node": "^22.10.0",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
