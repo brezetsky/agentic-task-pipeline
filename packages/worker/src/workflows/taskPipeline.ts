@@ -146,7 +146,7 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
     }
 
     go('opening-pr');
-    const pr = await acts.openPullRequest({ task, plan: approvedPlan, branch, runId });
+    const pr = await acts.openPullRequest({ task, plan: approvedPlan, branch: impl.branch, runId });
     prUrl = pr.url;
 
     go('reporting');
