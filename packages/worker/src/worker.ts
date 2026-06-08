@@ -1,16 +1,37 @@
-import type { StartRunInput } from '@pipeline/core/contracts';
+import { NativeConnection, Worker } from '@temporalio/worker';
+import { loadConfig, loadEnv } from '@pipeline/core';
+import * as activities from './activities/index.js';
 
-/**
- * Temporal worker entrypoint. The deterministic workflow + the I/O activities
- * are wired up in Phase 1. For now this validates the toolchain and the
- * deterministic-safe deep import of "@pipeline/core/contracts".
- */
-async function main(): Promise<void> {
-  console.log('[worker] scaffold ready — workflows/activities arrive in Phase 1');
+async function connectWithRetry(address: string, attempts = 60): Promise<NativeConnection> {
+  let lastErr: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await NativeConnection.connect({ address });
+    } catch (err) {
+      lastErr = err;
+      console.log(`[worker] waiting for Temporal at ${address} (attempt ${i}/${attempts})...`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  throw lastErr;
 }
 
-/** Re-export proves the contracts deep-import resolves at build time. */
-export type WorkerStartInput = StartRunInput;
+async function main(): Promise<void> {
+  loadEnv();
+  const cfg = loadConfig();
+  const connection = await connectWithRetry(cfg.temporal.address);
+  const worker = await Worker.create({
+    connection,
+    namespace: cfg.temporal.namespace,
+    taskQueue: cfg.temporal.taskQueue,
+    workflowsPath: require.resolve('./workflows/index'),
+    activities,
+  });
+  console.log(
+    `[worker] ready — namespace=${cfg.temporal.namespace} taskQueue=${cfg.temporal.taskQueue} (Temporal ${cfg.temporal.address})`,
+  );
+  await worker.run();
+}
 
 main().catch((err) => {
   console.error('[worker] fatal', err);

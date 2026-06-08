@@ -96,6 +96,31 @@ export const RunStatusSchema = z.object({
 });
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
+/** Result of the implement step. */
+export const ImplementResultSchema = z.object({
+  branch: z.string(),
+  filesChanged: z.array(z.string()),
+  commitSha: z.string().optional(),
+});
+export type ImplementResult = z.infer<typeof ImplementResultSchema>;
+
+/** Result of the test step. */
+export const TestResultSchema = z.object({
+  passed: z.boolean(),
+  summary: z.string(),
+  output: z.string().optional(),
+});
+export type TestResult = z.infer<typeof TestResultSchema>;
+
+/** Result of opening a pull request (real or simulated). */
+export const PrResultSchema = z.object({
+  url: z.string(),
+  number: z.number().optional(),
+  title: z.string().optional(),
+  simulated: z.boolean(),
+});
+export type PrResult = z.infer<typeof PrResultSchema>;
+
 /** Terminal result of a run. */
 export const RunResultSchema = z.object({
   runId: z.string(),
@@ -110,6 +135,8 @@ export type RunResult = z.infer<typeof RunResultSchema>;
 /** Input used to start a pipeline run. */
 export const StartRunInputSchema = z.object({
   task: TaskSchema,
+  /** Max plan revisions before the run is auto-rejected (set from config). */
+  maxRevisions: z.number().optional(),
   /** Demo/test convenience: auto-approve the first plan without a human. */
   autoApprove: z.boolean().optional(),
 });

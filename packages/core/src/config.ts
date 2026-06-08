@@ -9,6 +9,9 @@
  * The `enabled` flags implement graceful degradation: a real integration turns
  * on only when all of its required vars are present; otherwise the mock is used.
  */
+import { config as dotenvConfig } from 'dotenv';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 export interface AppConfig {
   temporal: { address: string; namespace: string; taskQueue: string };
@@ -69,4 +72,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     targetRepo: { path: env.TARGET_REPO_PATH, url: env.TARGET_REPO_URL },
     maxRevisions: Number(env.MAX_REVISIONS ?? 3),
   };
+}
+
+/**
+ * Load environment variables from the nearest `.env`, walking up from `startDir`
+ * (the repo root holds the single `.env`). No-op when none exists. Call from
+ * entrypoints (api/worker/cli) only — never from workflow code.
+ */
+export function loadEnv(startDir: string = process.cwd()): void {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const candidate = resolve(dir, '.env');
+    if (existsSync(candidate)) {
+      dotenvConfig({ path: candidate });
+      return;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  dotenvConfig();
 }

@@ -20,6 +20,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "dotenv": "^16.4.7",
     "zod": "^4.4.3"
   }
 }
