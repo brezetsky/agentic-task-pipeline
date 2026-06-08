@@ -1,0 +1,40 @@
+# ===========================================================================
+# terraform.tfvars.example
+#
+# Copy to `terraform.tfvars` and fill in real values, OR export the same values
+# as TF_VAR_<name> environment variables (preferred for secrets in CI).
+#
+#     cp terraform.tfvars.example terraform.tfvars
+#
+# !! NEVER COMMIT terraform.tfvars (or any file containing real secrets). !!
+# Add it to .gitignore. The values below are PLACEHOLDERS only.
+# ===========================================================================
+
+# --- Core ------------------------------------------------------------------
+aws_region   = "us-east-1"
+project_name = "agent-pipeline"
+
+# --- Image tag for the first-party api/worker images in ECR ---------------
+# image_tag = "latest"
+
+# --- Fargate sizing (optional; sane defaults in variables.tf) -------------
+# task_cpu      = 512
+# task_memory   = 1024
+# desired_count = 1
+
+# --- RDS / Postgres --------------------------------------------------------
+# db_name and db_username have defaults; set a strong password here or via
+# TF_VAR_db_password. This is also Temporal's POSTGRES_PWD.
+db_username = "temporal"
+db_password = "CHANGE_ME_use_a_strong_password" # placeholder — do not ship
+
+# --- Application secrets (LLM / GitHub / Trello) ---------------------------
+# All optional: leave "" to run on mocks/stubs (the app degrades gracefully).
+# Fill in only the integrations you want live. PLACEHOLDERS — replace or omit.
+google_generative_ai_api_key = "" # e.g. "AIza..."
+github_token                 = "" # e.g. "ghp_..."
+github_owner                 = "" # e.g. "my-org"
+github_repo                  = "" # e.g. "my-repo"
+trello_api_key               = ""
+trello_token                 = ""
+trello_list_id               = ""
