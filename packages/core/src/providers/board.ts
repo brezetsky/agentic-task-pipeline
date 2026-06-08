@@ -46,7 +46,54 @@ export class MockBoardProvider implements BoardProvider {
   }
 }
 
-export function createBoardProvider(_cfg: AppConfig): BoardProvider {
-  // Phase 6 returns a TrelloBoardProvider when _cfg.board.enabled.
-  return new MockBoardProvider();
+interface TrelloCard {
+  id: string;
+  name: string;
+  desc: string;
+  shortUrl?: string;
+  url?: string;
+}
+
+/** Trello-backed board. Auth is via key+token query params (Trello's REST style). */
+export class TrelloBoardProvider implements BoardProvider {
+  readonly name = 'trello';
+  constructor(private readonly cfg: AppConfig['board']) {}
+
+  private auth(): string {
+    return `key=${this.cfg.apiKey}&token=${this.cfg.token}`;
+  }
+
+  private toTask(c: TrelloCard): Task {
+    return {
+      id: c.id,
+      title: c.name,
+      description: c.desc && c.desc.trim() ? c.desc : c.name,
+      source: 'trello',
+      url: c.shortUrl ?? c.url,
+    };
+  }
+
+  async listTasks(): Promise<Task[]> {
+    const res = await fetch(`https://api.trello.com/1/lists/${this.cfg.listId}/cards?${this.auth()}`);
+    if (!res.ok) throw new Error(`Trello list cards failed (${res.status})`);
+    const cards = (await res.json()) as TrelloCard[];
+    return cards.map((c) => this.toTask(c));
+  }
+
+  async getTask(id: string): Promise<Task | null> {
+    const res = await fetch(`https://api.trello.com/1/cards/${id}?${this.auth()}`);
+    if (!res.ok) return null;
+    return this.toTask((await res.json()) as TrelloCard);
+  }
+
+  async comment(taskId: string, text: string): Promise<void> {
+    await fetch(
+      `https://api.trello.com/1/cards/${taskId}/actions/comments?${this.auth()}&text=${encodeURIComponent(text)}`,
+      { method: 'POST' },
+    ).catch(() => undefined);
+  }
+}
+
+export function createBoardProvider(cfg: AppConfig): BoardProvider {
+  return cfg.board.enabled ? new TrelloBoardProvider(cfg.board) : new MockBoardProvider();
 }
