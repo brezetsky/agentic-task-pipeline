@@ -49,5 +49,42 @@ services:
     ports:
       - "8080:8080"
 
+  # --- App services. Credentials (if any) come from an optional root .env;
+  #     with none set the pipeline runs end-to-end on mocks. ---
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: ap-worker
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=agent-pipeline
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      - temporal
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      target: api
+    container_name: ap-api
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=agent-pipeline
+      - API_PORT=3001
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "3001:3001"
+    depends_on:
+      - temporal
+    restart: on-failure
+
 volumes:
   temporal-pg:
