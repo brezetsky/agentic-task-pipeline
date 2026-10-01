@@ -2,16 +2,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { runDockerTest } from './docker-runner.js';
 import type { TestResult } from '../contracts/index.js';
 import { EXECUTION_POLICY, PolicyError } from '../policy.js';
 
 export interface RunTestOptions {
+  mode?: 'docker' | 'local';
+  image?: string;
   signal?: AbortSignal;
   onLine?: (line: string) => void;
   timeoutMs?: number;
 }
 
-/** Trusted repositories only: environment filtering and command policy are not an OS sandbox. */
+/** Docker by default; local mode is reserved for explicitly trusted development fixtures. */
 export async function runTestCommand(
   dir: string,
   command: string,
@@ -20,6 +23,7 @@ export async function runTestCommand(
   if (!(EXECUTION_POLICY.testCommands as readonly string[]).includes(command))
     throw new PolicyError('Test command is not allowed');
   if (opts.signal?.aborted) return { passed: false, summary: 'Tests cancelled before start' };
+  if (opts.mode !== 'local') return runDockerTest(dir, command, opts);
   const home = await mkdtemp(join(tmpdir(), 'pipeline-test-'));
   try {
     return await new Promise<TestResult>((resolve) => {

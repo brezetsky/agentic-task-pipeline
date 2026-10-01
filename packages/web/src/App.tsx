@@ -86,6 +86,15 @@ export function App() {
       {info && (
         <div className="integrations">
           <span>
+            Access{' '}
+            <code>
+              {info.access.id}: {info.access.roles.join(', ')}
+            </code>
+          </span>
+          <span>
+            Execution <code>{info.execution}</code>
+          </span>
+          <span>
             LLM <code>{info.integrations.llm}</code>
           </span>
           <span>
@@ -105,7 +114,10 @@ export function App() {
               <div className="task-card" key={t.id}>
                 <div className="task-title">{t.title}</div>
                 <div className="task-desc">{t.description}</div>
-                <button disabled={starting === t.id} onClick={() => onStart(t.id)}>
+                <button
+                  disabled={starting === t.id || !info?.access.roles.includes('operator')}
+                  onClick={() => onStart(t.id)}
+                >
                   {starting === t.id ? 'Starting…' : 'Start run →'}
                 </button>
               </div>
@@ -130,7 +142,11 @@ export function App() {
 
         <main>
           {selected ? (
-            <RunDetail runId={selected} onChange={refreshRuns} />
+            <RunDetail
+              runId={selected}
+              onChange={refreshRuns}
+              canReview={info?.access.roles.includes('reviewer') ?? false}
+            />
           ) : (
             <div className="empty">
               Pick an inbound task and press “Start run”, then approve its plan here.

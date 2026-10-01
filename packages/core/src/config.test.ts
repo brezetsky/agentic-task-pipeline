@@ -57,3 +57,19 @@ it('requires an explicit live model and rejects unsupported clone URLs', () => {
   expect(() => loadConfig({ GOOGLE_GENERATIVE_AI_API_KEY: 'x' })).toThrow('LLM_MODEL');
   expect(() => loadConfig({ TARGET_REPO_URL: 'https://example.com/repo' })).toThrow('unsupported');
 });
+
+it('validates named principals without exposing malformed credential values', () => {
+  const principal = { id: 'reader', roles: ['viewer'], tokenSha256: 'a'.repeat(64) };
+  const env = { NODE_ENV: 'production', API_PRINCIPALS: JSON.stringify([principal]) };
+  expect(loadConfig(env).api.principals[0].roles).toEqual(['viewer']);
+  expect(() => loadConfig({ ...env, API_AUTH_TOKEN: 'a'.repeat(32) })).toThrow('not both');
+  expect(() => loadConfig({ API_PRINCIPALS: JSON.stringify([principal, principal]) })).toThrow(
+    'unique',
+  );
+  expect(() => loadConfig({ API_PRINCIPALS: 'secret-invalid-json' })).toThrow('JSON array');
+  expect(() =>
+    loadConfig({ API_PRINCIPALS: JSON.stringify([{ ...principal, roles: ['admin'] }]) }),
+  ).toThrow('JSON array');
+  expect(loadConfig({}).execution.mode).toBe('docker');
+  expect(() => loadConfig({ EXECUTION_MODE: 'unknown' })).toThrow();
+});

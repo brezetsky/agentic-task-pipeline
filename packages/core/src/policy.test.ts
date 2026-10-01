@@ -91,7 +91,7 @@ describe('test execution', () => {
         join(root, 'check.test.js'),
         'if (process.env.PIPELINE_SECRET_TEST) process.exit(1)',
       );
-      expect((await runTestCommand(root, 'node --test')).passed).toBe(true);
+      expect((await runTestCommand(root, 'node --test', { mode: 'local' })).passed).toBe(true);
     } finally {
       delete process.env.PIPELINE_SECRET_TEST;
     }
@@ -102,7 +102,7 @@ describe('test execution', () => {
       join(root, 'wait.test.js'),
       "console.log('x'.repeat(50000)); setInterval(() => {}, 1000)",
     );
-    const result = await runTestCommand(root, 'node --test', { timeoutMs: 400 });
+    const result = await runTestCommand(root, 'node --test', { mode: 'local', timeoutMs: 400 });
     expect(result.passed).toBe(false);
     expect(result.summary).toContain('timed out');
     expect(result.output!.length).toBeLessThanOrEqual(8000);
@@ -111,7 +111,10 @@ describe('test execution', () => {
     const root = await temp();
     await writeFile(join(root, 'wait.test.js'), 'setInterval(() => {}, 1000)');
     const controller = new AbortController();
-    const pending = runTestCommand(root, 'node --test', { signal: controller.signal });
+    const pending = runTestCommand(root, 'node --test', {
+      mode: 'local',
+      signal: controller.signal,
+    });
     setTimeout(() => controller.abort(), 100);
     expect((await pending).passed).toBe(false);
   });

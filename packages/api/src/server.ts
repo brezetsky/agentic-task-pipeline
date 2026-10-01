@@ -4,7 +4,7 @@ import express from 'express';
 import { createBoardProvider, loadConfig, loadEnv, type AppConfig } from '@pipeline/core';
 import { DecisionSchema, TaskSchema } from '@pipeline/core';
 import { ZodError } from 'zod';
-import { authenticate, requestLog, StartRequestSchema } from './security.js';
+import { authenticate, authorize, requestLog, StartRequestSchema } from './security.js';
 import { getClient, getRunStatus, listRuns, sendDecision, startRun } from './temporal.js';
 
 export function createApp(cfg: AppConfig) {
@@ -18,7 +18,7 @@ export function createApp(cfg: AppConfig) {
     res.json({ ok: true, service: 'agent-pipeline-api' });
   });
 
-  app.use('/api', authenticate(cfg.api.token));
+  app.use('/api', authenticate(cfg.api.token, cfg.api.principals), authorize('viewer'));
 
   app.get('/api/ready', async (_req, res, next) => {
     try {
@@ -42,6 +42,8 @@ export function createApp(cfg: AppConfig) {
         github: cfg.github.enabled ? `${cfg.github.owner}/${cfg.github.repo}` : 'simulated',
       },
       maxRevisions: cfg.maxRevisions,
+      access: res.locals.principal,
+      execution: cfg.execution.mode,
     });
   });
 
@@ -55,7 +57,7 @@ export function createApp(cfg: AppConfig) {
   });
 
   /** Start a run from a board task id, or from a task supplied in the body. */
-  app.post('/api/runs', async (req, res, next) => {
+  app.post('/api/runs', authorize('operator'), async (req, res, next) => {
     try {
       const body = StartRequestSchema.parse(req.body);
       let task = body.task ?? null;
@@ -95,10 +97,14 @@ export function createApp(cfg: AppConfig) {
   });
 
   /** Relay a human decision into the paused workflow (durable signal). */
-  app.post('/api/runs/:id/decision', async (req, res, next) => {
+  app.post('/api/runs/:id/decision', authorize('reviewer'), async (req, res, next) => {
     try {
-      const decision = DecisionSchema.parse(req.body);
-      await sendDecision(cfg, req.params.id, decision);
+      const decision = {
+        ...DecisionSchema.parse(req.body),
+        actor: res.locals.principal.id,
+        at: new Date().toISOString(),
+      };
+      await sendDecision(cfg, String(req.params.id), decision);
       res.json({ ok: true });
     } catch (e) {
       next(e);

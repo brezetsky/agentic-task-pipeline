@@ -2,6 +2,14 @@
 name: agent-pipeline
 
 services:
+  # Preload the operator-selected image; task containers never pull images themselves.
+  runner-image:
+    image: ${TEST_RUNNER_IMAGE:-node:22-slim}
+    entrypoint: ['/bin/true']
+    network_mode: none
+    read_only: true
+    user: '1000:1000'
+
   postgresql:
     image: postgres:16
     container_name: ap-postgresql
@@ -63,10 +71,15 @@ services:
       - path: .env
         required: false
     depends_on:
-      - temporal
+      temporal:
+        condition: service_started
+      runner-image:
+        condition: service_completed_successfully
     restart: on-failure
     volumes:
       - worker-work:/app/.work
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add: ['${DOCKER_SOCKET_GID:-0}']
     init: true
     security_opt: ['no-new-privileges:true']
 

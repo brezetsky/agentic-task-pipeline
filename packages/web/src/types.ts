@@ -68,6 +68,8 @@ export interface RunStatus {
 
 export interface Info {
   mode: 'mock' | 'live';
+  access: { id: string; roles: string[] };
+  execution: 'docker' | 'local';
   integrations: { llm: string; board: string; github: string };
   maxRevisions: number;
 }

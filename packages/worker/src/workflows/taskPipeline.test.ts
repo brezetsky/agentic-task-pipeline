@@ -124,11 +124,17 @@ describe('taskPipeline (durable human-in-the-loop)', () => {
         kind: 'request-changes',
         planRevision: 0,
         feedback: 'use TS',
+        actor: 'reviewer-one',
       });
       await waitUntil(
         () => handle.query(getStatus),
         (s) => s.revisions === 1 && s.state === 'awaiting-approval',
       );
+      expect(
+        (await handle.query(getStatus)).history.some(
+          (h) => h.note === 'request-changes revision 0 by reviewer-one',
+        ),
+      ).toBe(true);
       await handle.signal(submitDecision, { kind: 'approve', planRevision: 1 });
       return handle.result();
     });

@@ -94,6 +94,11 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
       parsed.data.planRevision === revisions
     ) {
       decision = { ...parsed.data, at: now() };
+      history.push({
+        state,
+        at: now(),
+        note: `${parsed.data.kind} revision ${revisions} by ${parsed.data.actor ?? 'direct-client'}`,
+      });
       log.info(`decision received: ${d.kind}`);
     } else {
       log.warn(`decision ignored (state=${state})`);

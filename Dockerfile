@@ -4,6 +4,8 @@
 # core bridge) match the container platform.
 
 # ---- build: install workspaces and compile everything ----
+FROM docker:28-cli AS docker-cli
+
 FROM node:22 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -18,6 +20,7 @@ RUN npm run build && npm run build -w @pipeline/web
 
 # ---- worker runtime ----
 FROM node:22-slim AS worker
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production

@@ -62,7 +62,7 @@ async function main() {
           git.implement({ plan, runId, branch: `agent/${runId}`, message: 'demo: approved edit' }),
         runTests: async ({ runId, testCommand }: { runId: string; testCommand: string }) => {
           const head = await git.head(runId);
-          const result = await runTestCommand(workspaceDir(runId), testCommand);
+          const result = await runTestCommand(workspaceDir(runId), testCommand, { mode: 'local' });
           if (result.passed) await git.recordTestSuccess(runId, head);
           return result;
         },

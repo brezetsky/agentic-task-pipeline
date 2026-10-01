@@ -61,9 +61,9 @@ export interface RunTestsArgs {
 export async function runTests({ runId, testCommand }: RunTestsArgs): Promise<TestResult> {
   const ctx = Context.current();
   const cfg = loadConfig();
-  if ((cfg.github.enabled || cfg.targetRepo.path) && !cfg.allowLocalExecution) {
+  if (cfg.execution.mode === 'local' && !cfg.allowLocalExecution) {
     throw new PolicyError(
-      'Custom repository execution requires ALLOW_LOCAL_EXECUTION=true on an isolated trusted host',
+      'Local execution requires ALLOW_LOCAL_EXECUTION=true; Docker isolation is the default',
     );
   }
   const workspace = new GitWorkspace(cfg);
@@ -72,6 +72,8 @@ export async function runTests({ runId, testCommand }: RunTestsArgs): Promise<Te
   try {
     const result = await runTestCommand(workspaceDir(runId), testCommand, {
       signal: ctx.cancellationSignal,
+      mode: cfg.execution.mode,
+      image: cfg.execution.image,
     });
     if (result.passed) await workspace.recordTestSuccess(runId, head);
     return result;

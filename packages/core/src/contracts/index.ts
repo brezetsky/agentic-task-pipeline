@@ -71,6 +71,7 @@ export const DecisionSchema = z.object({
   planRevision: z.number().int().min(0).max(10),
   feedback: z.string().min(1).max(4000).optional(),
   at: z.string().optional(),
+  actor: z.string().max(80).optional(),
 });
 export type Decision = z.infer<typeof DecisionSchema>;
 

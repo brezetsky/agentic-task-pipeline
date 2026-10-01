@@ -42,7 +42,9 @@ it('applies a snapshot deterministically and gates publication on a clean tested
     'Reviewed change',
   );
   const head = await args.workspace.head(args.runId);
-  expect((await runTestCommand(workspaceDir(args.runId), 'npm test')).passed).toBe(true);
+  expect(
+    (await runTestCommand(workspaceDir(args.runId), 'npm test', { mode: 'local' })).passed,
+  ).toBe(true);
   await args.workspace.recordTestSuccess(args.runId, head);
   await args.workspace.publish(args.runId, args.branch); // simulated, no network
   await writeFile(resolve(workspaceDir(args.runId), 'src/sum.js'), 'modified after tests');

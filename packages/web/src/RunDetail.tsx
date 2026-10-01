@@ -6,7 +6,15 @@ import type { RunStatus } from './types';
  * Live run view. Subscribes to the SSE stream and also polls as a safety net
  * (so it stays live even if a dev proxy buffers the stream).
  */
-export function RunDetail({ runId, onChange }: { runId: string; onChange: () => void }) {
+export function RunDetail({
+  runId,
+  onChange,
+  canReview,
+}: {
+  runId: string;
+  onChange: () => void;
+  canReview: boolean;
+}) {
   const [status, setStatus] = useState<RunStatus | null>(null);
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
@@ -115,7 +123,8 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
         </section>
       )}
 
-      {awaiting && (
+      {awaiting && !canReview && <p className="muted">A reviewer must approve this plan.</p>}
+      {awaiting && canReview && (
         <section className="approve-box">
           <h3>Your decision</h3>
           <textarea
