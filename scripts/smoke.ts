@@ -36,14 +36,27 @@ async function main() {
   assert(ready, 'Temporal/API did not become ready');
   const info = await request<{ mode: string }>('/info');
   assert.equal(info.mode, 'mock', 'Smoke test requires mock providers; refusing live side effects');
-  const { runId } = await request<{ runId: string }>('/runs', {
+  const input = {
     task: {
       id: `smoke-${Date.now()}`,
       title: 'Document local addition behavior',
       description: 'Add a short note describing the sample sum function.',
       source: 'smoke',
     },
-  });
+  };
+  let runId: string | undefined;
+  for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
+    try {
+      // Connectivity can precede namespace initialization on a cold Temporal start.
+      // Keep the task ID stable: startRun is idempotent if a response was lost.
+      ({ runId } = await request<{ runId: string }>('/runs', input));
+      break;
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 503) throw error;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  assert(runId, 'Temporal did not accept the workflow before the startup deadline');
   async function waitFor(predicate: (s: RunStatus) => boolean): Promise<RunStatus> {
     for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
       const status = await request<RunStatus>(`/runs/${runId}`).catch((error) => {
