@@ -9,4 +9,6 @@ For context, use repository files or the configured MCP `search_repository` and 
 
 Preserve the workflow determinism boundary and revision-bound approval. Changes to publish behavior need evidence that failed tests, stale receipts, or remote divergence cannot publish a new commit. Changes to context need evidence that hidden files and symlinks remain excluded. Changes to external providers need bounded requests and explicit transient/permanent failure classification.
 
+Execution changes must preserve a credential-free task container with no network, host mounts or Docker socket. Validate with `RUN_DOCKER_TESTS=1 npm test -- packages/core/src/providers/docker-runner.test.ts` against a preloaded runner image. Permission changes need actual HTTP tests proving denied requests never start a workflow or send a decision, and that reviewer identity comes from authentication.
+
 Run `npm run check` and, for execution/orchestration changes, `npm run demo`. For a new LLM failure mode, add a reproducible case to `evals/cases.json` where deterministic validation can enforce it; do not describe that as a model-quality evaluation. Report changed behavior, check results, and remaining limits. Follow the user's existing authorization for publication.
