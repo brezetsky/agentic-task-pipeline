@@ -31,6 +31,8 @@ jobs:
       - run: docker build --target api -t agent-pipeline-api:ci .
       - run: docker build --target worker -t agent-pipeline-worker:ci .
       - run: docker pull node:22-slim
+      - name: Match the Linux Docker socket group for the non-root worker
+        run: echo "DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)" >> "$GITHUB_ENV"
       - run: docker compose up -d --build
       - run: docker compose exec -T api node --import tsx scripts/smoke.ts
       - run: docker compose exec -T -e RUN_DOCKER_TESTS=1 worker node node_modules/vitest/vitest.mjs run packages/core/src/providers/docker-runner.test.ts
