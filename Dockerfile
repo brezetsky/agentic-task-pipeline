@@ -11,6 +11,7 @@ COPY packages/core/package.json packages/core/package.json
 COPY packages/worker/package.json packages/worker/package.json
 COPY packages/api/package.json packages/api/package.json
 COPY packages/web/package.json packages/web/package.json
+COPY packages/mcp/package.json packages/mcp/package.json
 RUN npm ci
 COPY . .
 RUN npm run build && npm run build -w @pipeline/web
@@ -20,7 +21,9 @@ FROM node:22-slim AS worker
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
-COPY --from=build /app ./
+COPY --from=build --chown=node:node /app ./
+RUN mkdir -p /app/.work && chown node:node /app/.work
+USER node
 CMD ["node", "packages/worker/dist/worker.js"]
 
 # ---- api runtime (serves /api and the built SPA on the same origin) ----
@@ -29,5 +32,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 EXPOSE 3001
-COPY --from=build /app ./
+COPY --from=build --chown=node:node /app ./
+RUN mkdir -p /app/.work && chown node:node /app/.work
+USER node
 CMD ["node", "packages/api/dist/server.js"]

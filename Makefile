@@ -13,7 +13,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install all workspace deps (Node 22)
-	$(NVM) npm install
+	$(NVM) npm ci
 
 build: ## Build every package (tsc -b)
 	$(NVM) npm run build
@@ -41,6 +41,7 @@ web: ## Run the Vite dev server
 	$(NVM) npm run dev -w @pipeline/web
 
 dev: ## One command (host): Temporal + worker + api + web together
+	mkdir -p .temporal
 	$(NVM) npm run build -w @pipeline/core && npx concurrently -k -n temporal,worker,api,web -c blue,green,magenta,cyan \
 		"temporal server start-dev --ui-port 8233 --db-filename .temporal/temporal.db --log-level warn" \
 		"npm run dev -w @pipeline/worker" \
@@ -51,8 +52,8 @@ dev: ## One command (host): Temporal + worker + api + web together
 up: ## One command (Docker): bring the whole stack up
 	docker compose up --build
 
-down: ## Stop containers and remove volumes
-	docker compose down -v
+down: ## Stop containers, preserving durable state
+	docker compose down
 
 logs: ## Follow container logs
 	docker compose logs -f

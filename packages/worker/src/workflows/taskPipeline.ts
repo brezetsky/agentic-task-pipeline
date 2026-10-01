@@ -7,7 +7,14 @@
  * Note: in the Temporal TS sandbox, `Date.now()`/`new Date()` are deterministic
  * (replaced by the SDK), so timestamping history here is replay-safe.
  */
-import { condition, log, proxyActivities, setHandler, workflowInfo } from '@temporalio/workflow';
+import {
+  ApplicationFailure,
+  condition,
+  log,
+  proxyActivities,
+  setHandler,
+  workflowInfo,
+} from '@temporalio/workflow';
 import type * as activities from '../activities/index.js';
 import type {
   Analysis,
@@ -19,6 +26,7 @@ import type {
   RunStatus,
   StartRunInput,
 } from '@pipeline/core/contracts';
+import { DecisionSchema, StartRunInputSchema } from '@pipeline/core/contracts';
 import { getStatus, submitDecision } from './signals.js';
 
 const acts = proxyActivities<typeof activities>({
@@ -28,7 +36,7 @@ const acts = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumAttempts: 3,
     // PR client errors (bad token, etc.) should fail fast, not retry.
-    nonRetryableErrorTypes: ['PrError'],
+    nonRetryableErrorTypes: ['PrError', 'PolicyError'],
   },
 });
 
@@ -40,16 +48,23 @@ const longActs = proxyActivities<typeof activities>({
     initialInterval: '2 seconds',
     backoffCoefficient: 2,
     maximumAttempts: 2,
+    nonRetryableErrorTypes: ['PolicyError'],
   },
 });
 
 export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
+  const parsedInput = StartRunInputSchema.safeParse(input);
+  if (!parsedInput.success)
+    throw ApplicationFailure.nonRetryable('Invalid workflow input', 'ValidationError');
+  input = parsedInput.data;
   const { task } = input;
   const runId = workflowInfo().workflowId;
   const maxRevisions = input.maxRevisions ?? 3;
 
   // --- queryable run state ---
   let state: RunState = 'pending';
+  let contextDigest: string | undefined;
+  let contextPaths: string[] | undefined;
   let analysis: Analysis | undefined;
   let plan: Plan | undefined;
   let decision: Decision | undefined;
@@ -65,50 +80,59 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
   const go = (next: RunState, note?: string): void => {
     state = next;
     history.push({ state: next, at: now(), ...(note ? { note } : {}) });
-    log.info(`run ${runId} -> ${next}`, note ? { note } : {});
+    log.info('pipeline.transition', { runId, state: next, revisions });
   };
 
   // Handlers MUST be registered before the first await so buffered signals and
   // early queries are handled correctly.
   setHandler(submitDecision, (d: Decision) => {
-    if (state === 'awaiting-approval') {
-      decision = { ...d, at: now() };
+    const parsed = DecisionSchema.safeParse(d);
+    if (
+      state === 'awaiting-approval' &&
+      !decision &&
+      parsed.success &&
+      parsed.data.planRevision === revisions
+    ) {
+      decision = { ...parsed.data, at: now() };
       log.info(`decision received: ${d.kind}`);
     } else {
       log.warn(`decision ignored (state=${state})`);
     }
   });
-  setHandler(
-    getStatus,
-    (): RunStatus => ({
-      runId,
-      task,
-      state,
-      analysis,
-      plan,
-      revisions,
-      lastFeedback,
-      branch,
-      prUrl,
-      testsPassed,
-      error,
-      history,
-    }),
-  );
+  setHandler(getStatus, (): RunStatus => ({
+    runId,
+    task,
+    state,
+    contextDigest,
+    contextPaths,
+    analysis,
+    plan,
+    revisions,
+    lastFeedback,
+    branch,
+    prUrl,
+    testsPassed,
+    error,
+    history,
+  }));
 
   try {
+    go('preparing');
+    const context = await acts.prepareWorkspace(runId);
+    contextDigest = context.digest;
+    contextPaths = context.files.map((file) => file.path);
     go('analyzing');
     analysis = await acts.analyzeTask(task);
 
     go('planning');
-    plan = await acts.proposePlan({ task, analysis });
+    plan = await acts.proposePlan({ task, analysis, context });
 
     // --- approval + revise loop (the durable human-in-the-loop pause) ---
     for (;;) {
       go('awaiting-approval');
       decision = undefined;
       if (input.autoApprove && revisions === 0) {
-        decision = { kind: 'approve', at: now() };
+        decision = { kind: 'approve', planRevision: revisions, at: now() };
       }
       await condition(() => decision !== undefined);
       const d = decision as Decision;
@@ -127,7 +151,7 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
         };
       }
       go('replanning', d.feedback);
-      plan = await acts.proposePlan({ task, analysis, feedback: d.feedback });
+      plan = await acts.proposePlan({ task, analysis, feedback: d.feedback, context });
     }
 
     const approvedPlan: Plan = plan;
@@ -142,7 +166,13 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
     if (!test.passed) {
       error = test.summary;
       go('failed', 'tests failed');
-      return { runId, outcome: 'failed', branch, testsPassed, summary: `Tests failed: ${test.summary}` };
+      return {
+        runId,
+        outcome: 'failed',
+        branch,
+        testsPassed,
+        summary: `Tests failed: ${test.summary}`,
+      };
     }
 
     go('opening-pr');
@@ -153,10 +183,24 @@ export async function taskPipeline(input: StartRunInput): Promise<RunResult> {
     await acts.reportResult({ task, runId, prUrl, branch, testsPassed });
 
     go('completed');
-    return { runId, outcome: 'completed', branch, prUrl, testsPassed, summary: `Opened PR: ${pr.url}` };
+    return {
+      runId,
+      outcome: 'completed',
+      branch,
+      prUrl,
+      testsPassed,
+      summary: `Opened PR: ${pr.url}`,
+    };
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
     go('failed', error);
-    return { runId, outcome: 'failed', branch, prUrl, testsPassed, summary: `Pipeline failed: ${error}` };
+    return {
+      runId,
+      outcome: 'failed',
+      branch,
+      prUrl,
+      testsPassed,
+      summary: `Pipeline failed: ${error}`,
+    };
   }
 }

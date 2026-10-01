@@ -11,11 +11,12 @@
  */
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync } from 'node:fs';
+import { z } from 'zod';
 import { dirname, resolve } from 'node:path';
 
 export interface AppConfig {
   temporal: { address: string; namespace: string; taskQueue: string };
-  api: { port: number };
+  api: { port: number; host: string; token?: string };
   web: { port: number };
   llm: { apiKey?: string; model: string; enabled: boolean };
   board: { apiKey?: string; token?: string; listId?: string; enabled: boolean };
@@ -26,8 +27,9 @@ export interface AppConfig {
     baseBranch: string;
     enabled: boolean;
   };
-  targetRepo: { path?: string; url?: string };
+  targetRepo: { path?: string };
   maxRevisions: number;
+  allowLocalExecution: boolean;
 }
 
 function bool(...vals: (string | undefined)[]): boolean {
@@ -43,17 +45,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const ghOwner = env.GITHUB_OWNER;
   const ghRepo = env.GITHUB_REPO;
 
+  const port = (value: string | undefined, fallback: number) =>
+    z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(65535)
+      .parse(value || fallback);
+  const optional = (value: string | undefined) => value?.trim() || undefined;
+  const token = optional(env.API_AUTH_TOKEN);
+  if (bool(llmKey) && !optional(env.LLM_MODEL))
+    throw new Error('Set LLM_MODEL explicitly when enabling Gemini');
+  if (token && token.length < 32)
+    throw new Error('API_AUTH_TOKEN must have at least 32 characters');
+  if (env.NODE_ENV === 'production' && env.API_ALLOW_UNAUTHENTICATED !== 'true' && !token) {
+    throw new Error('Production API requires API_AUTH_TOKEN');
+  }
+  if (ghOwner)
+    z.string()
+      .regex(/^[a-zA-Z0-9-]+$/)
+      .parse(ghOwner);
+  if (ghRepo)
+    z.string()
+      .regex(/^[a-zA-Z0-9_.-]+$/)
+      .parse(ghRepo);
+  if (env.TARGET_REPO_URL)
+    throw new Error('TARGET_REPO_URL is unsupported; configure GitHub or TARGET_REPO_PATH');
   return {
     temporal: {
       address: env.TEMPORAL_ADDRESS ?? 'localhost:7233',
       namespace: env.TEMPORAL_NAMESPACE ?? 'default',
       taskQueue: env.TEMPORAL_TASK_QUEUE ?? 'agent-pipeline',
     },
-    api: { port: Number(env.API_PORT ?? 3001) },
-    web: { port: Number(env.WEB_PORT ?? 5173) },
+    api: { port: port(env.API_PORT, 3001), host: env.API_HOST || '127.0.0.1', token },
+    web: { port: port(env.WEB_PORT, 5173) },
     llm: {
       apiKey: llmKey,
-      model: env.LLM_MODEL ?? 'gemini-2.0-flash',
+      model: optional(env.LLM_MODEL) ?? 'unconfigured',
       enabled: bool(llmKey),
     },
     board: {
@@ -69,8 +97,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       baseBranch: env.GITHUB_BASE_BRANCH ?? 'main',
       enabled: bool(ghToken, ghOwner, ghRepo),
     },
-    targetRepo: { path: env.TARGET_REPO_PATH, url: env.TARGET_REPO_URL },
-    maxRevisions: Number(env.MAX_REVISIONS ?? 3),
+    targetRepo: { path: optional(env.TARGET_REPO_PATH) },
+    maxRevisions: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .parse(env.MAX_REVISIONS || 3),
+    allowLocalExecution: env.ALLOW_LOCAL_EXECUTION === 'true',
   };
 }
 

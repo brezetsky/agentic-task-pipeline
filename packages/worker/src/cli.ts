@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 /**
  * Dev CLI to drive the pipeline before the HTTP API exists (Phase 3).
  * Usage (from repo root):
@@ -25,6 +26,7 @@ function mockTask(): Task {
 }
 
 async function main(): Promise<void> {
+  process.chdir(resolve(__dirname, '../../..'));
   loadEnv();
   const cfg = loadConfig();
   const connection = await Connection.connect({ address: cfg.temporal.address });
@@ -34,6 +36,11 @@ async function main(): Promise<void> {
   try {
     switch (cmd) {
       case 'start': {
+        if (
+          rest.includes('--auto') &&
+          (cfg.github.enabled || cfg.llm.enabled || cfg.board.enabled || cfg.targetRepo.path)
+        )
+          throw new Error('--auto is restricted to the bundled offline demo');
         const task = mockTask();
         const input: StartRunInput = {
           task,
@@ -46,8 +53,12 @@ async function main(): Promise<void> {
           args: [input],
         });
         console.log(`Started run ${handle.workflowId} for task "${task.title}"`);
-        console.log(`  status:          npm run cli -w @pipeline/worker -- status ${handle.workflowId}`);
-        console.log(`  approve:         npm run cli -w @pipeline/worker -- approve ${handle.workflowId}`);
+        console.log(
+          `  status:          npm run cli -w @pipeline/worker -- status ${handle.workflowId}`,
+        );
+        console.log(
+          `  approve:         npm run cli -w @pipeline/worker -- approve ${handle.workflowId}`,
+        );
         console.log(
           `  request-changes: npm run cli -w @pipeline/worker -- request-changes ${handle.workflowId} "prefer TypeScript"`,
         );
@@ -56,7 +67,10 @@ async function main(): Promise<void> {
       case 'approve': {
         const id = rest[0];
         if (!id) throw new Error('usage: approve <workflowId>');
-        await client.workflow.getHandle(id).signal(submitDecision, { kind: 'approve' });
+        await client.workflow.getHandle(id).signal(submitDecision, {
+          kind: 'approve',
+          planRevision: (await client.workflow.getHandle(id).query(getStatus)).revisions,
+        });
         console.log(`Approved ${id}`);
         break;
       }
@@ -64,7 +78,11 @@ async function main(): Promise<void> {
         const id = rest[0];
         if (!id) throw new Error('usage: request-changes <workflowId> <feedback...>');
         const feedback = rest.slice(1).join(' ') || 'Please revise the plan.';
-        await client.workflow.getHandle(id).signal(submitDecision, { kind: 'request-changes', feedback });
+        await client.workflow.getHandle(id).signal(submitDecision, {
+          kind: 'request-changes',
+          feedback,
+          planRevision: (await client.workflow.getHandle(id).query(getStatus)).revisions,
+        });
         console.log(`Requested changes on ${id}: ${feedback}`);
         break;
       }

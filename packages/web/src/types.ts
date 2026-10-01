@@ -2,6 +2,7 @@
 // coupling to the backend packages).
 export type RunState =
   | 'pending'
+  | 'preparing'
   | 'analyzing'
   | 'planning'
   | 'awaiting-approval'
@@ -52,6 +53,8 @@ export interface RunStatus {
   runId: string;
   task: Task;
   state: RunState;
+  contextDigest?: string;
+  contextPaths?: string[];
   analysis?: Analysis;
   plan?: Plan;
   revisions: number;

@@ -12,6 +12,7 @@ import { z } from 'zod';
 /** Lifecycle states a run moves through. */
 export const RunStateSchema = z.enum([
   'pending',
+  'preparing',
   'analyzing',
   'planning',
   'awaiting-approval',
@@ -28,46 +29,47 @@ export type RunState = z.infer<typeof RunStateSchema>;
 
 /** A task pulled from the board (Trello card or mock). */
 export const TaskSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string(),
-  source: z.string(),
+  id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/),
+  title: z.string().min(1).max(200),
+  description: z.string().min(1).max(12000),
+  source: z.string().min(1).max(100),
   url: z.string().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
 /** Output of the analyze step. */
 export const AnalysisSchema = z.object({
-  summary: z.string(),
-  affectedAreas: z.array(z.string()),
-  risks: z.array(z.string()),
+  summary: z.string().min(1).max(4000),
+  affectedAreas: z.array(z.string().max(500)).max(20),
+  risks: z.array(z.string().max(1000)).max(20),
 });
 export type Analysis = z.infer<typeof AnalysisSchema>;
 
 /** A single proposed file change. Full-file `contents` (not a diff) keeps
  *  application robust and LLM-friendly. */
 export const FileEditSchema = z.object({
-  path: z.string(),
+  path: z.string().min(1).max(240),
   action: z.enum(['create', 'update', 'delete']),
-  contents: z.string().optional(),
-  rationale: z.string().optional(),
+  contents: z.string().max(32000).optional(),
+  rationale: z.string().max(1000).optional(),
 });
 export type FileEdit = z.infer<typeof FileEditSchema>;
 
 /** The plan a human approves or sends back. Kept intentionally flat so the
  *  LLM's structured-output (generateObject) is reliable across providers. */
 export const PlanSchema = z.object({
-  summary: z.string(),
-  steps: z.array(z.string()),
-  edits: z.array(FileEditSchema),
-  testCommand: z.string(),
+  summary: z.string().min(1).max(4000),
+  steps: z.array(z.string().min(1).max(1000)).min(1).max(20),
+  edits: z.array(FileEditSchema).min(1).max(20),
+  testCommand: z.string().max(100),
 });
 export type Plan = z.infer<typeof PlanSchema>;
 
 /** A human decision delivered to the paused workflow via a signal. */
 export const DecisionSchema = z.object({
   kind: z.enum(['approve', 'request-changes']),
-  feedback: z.string().optional(),
+  planRevision: z.number().int().min(0).max(10),
+  feedback: z.string().min(1).max(4000).optional(),
   at: z.string().optional(),
 });
 export type Decision = z.infer<typeof DecisionSchema>;
@@ -84,6 +86,8 @@ export const RunStatusSchema = z.object({
   runId: z.string(),
   task: TaskSchema,
   state: RunStateSchema,
+  contextDigest: z.string().optional(),
+  contextPaths: z.array(z.string()).optional(),
   analysis: AnalysisSchema.optional(),
   plan: PlanSchema.optional(),
   revisions: z.number(),
@@ -107,7 +111,7 @@ export type ImplementResult = z.infer<typeof ImplementResultSchema>;
 /** Result of the test step. */
 export const TestResultSchema = z.object({
   passed: z.boolean(),
-  summary: z.string(),
+  summary: z.string().min(1).max(4000),
   output: z.string().optional(),
 });
 export type TestResult = z.infer<typeof TestResultSchema>;
@@ -128,7 +132,7 @@ export const RunResultSchema = z.object({
   branch: z.string().optional(),
   prUrl: z.string().optional(),
   testsPassed: z.boolean().optional(),
-  summary: z.string(),
+  summary: z.string().min(1).max(4000),
 });
 export type RunResult = z.infer<typeof RunResultSchema>;
 
@@ -136,7 +140,7 @@ export type RunResult = z.infer<typeof RunResultSchema>;
 export const StartRunInputSchema = z.object({
   task: TaskSchema,
   /** Max plan revisions before the run is auto-rejected (set from config). */
-  maxRevisions: z.number().optional(),
+  maxRevisions: z.number().int().min(0).max(10).optional(),
   /** Demo/test convenience: auto-approve the first plan without a human. */
   autoApprove: z.boolean().optional(),
 });

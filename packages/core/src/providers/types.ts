@@ -4,12 +4,14 @@
  * on env. Implementations live in @pipeline/core but are imported only by the
  * API and the worker's ACTIVITIES — never by workflow code.
  */
+import type { RepositoryContext } from '../context.js';
 import type { Analysis, Plan, PrResult, Task } from '../contracts/index.js';
 
 export interface PlanArgs {
   task: Task;
   analysis: Analysis;
   feedback?: string;
+  context?: RepositoryContext;
 }
 
 /** Reasoning provider: analyze a task and propose an (editable) plan. */

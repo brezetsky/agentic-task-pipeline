@@ -21,6 +21,7 @@ describe('provider factories', () => {
   it('select real providers when credentials are present', () => {
     const cfg = loadConfig(
       env({
+        LLM_MODEL: 'test-model',
         GOOGLE_GENERATIVE_AI_API_KEY: 'x',
         TRELLO_API_KEY: 'k',
         TRELLO_TOKEN: 't',

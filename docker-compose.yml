@@ -15,7 +15,7 @@ services:
     volumes:
       - temporal-pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      test: ['CMD-SHELL', 'pg_isready -U temporal']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -34,7 +34,7 @@ services:
       - POSTGRES_SEEDS=postgresql
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
     ports:
-      - "7233:7233"
+      - '127.0.0.1:7233:7233'
     volumes:
       - ./infra/dynamicconfig:/etc/temporal/config/dynamicconfig
 
@@ -47,7 +47,7 @@ services:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:8080
     ports:
-      - "8080:8080"
+      - '127.0.0.1:8080:8080'
 
   # --- App services. Credentials (if any) come from an optional root .env;
   #     with none set the pipeline runs end-to-end on mocks. ---
@@ -57,6 +57,7 @@ services:
       target: worker
     container_name: ap-worker
     environment:
+      - API_ALLOW_UNAUTHENTICATED=true # local demo only; ports bind to loopback
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_NAMESPACE=default
       - TEMPORAL_TASK_QUEUE=agent-pipeline
@@ -66,6 +67,10 @@ services:
     depends_on:
       - temporal
     restart: on-failure
+    volumes:
+      - worker-work:/app/.work
+    init: true
+    security_opt: ['no-new-privileges:true']
 
   api:
     build:
@@ -73,18 +78,21 @@ services:
       target: api
     container_name: ap-api
     environment:
+      - API_ALLOW_UNAUTHENTICATED=true # local demo only; ports bind to loopback
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_NAMESPACE=default
       - TEMPORAL_TASK_QUEUE=agent-pipeline
       - API_PORT=3001
+      - API_HOST=0.0.0.0
     env_file:
       - path: .env
         required: false
     ports:
-      - "3001:3001"
+      - '127.0.0.1:3001:3001'
     depends_on:
       - temporal
     restart: on-failure
 
 volumes:
+  worker-work:
   temporal-pg:

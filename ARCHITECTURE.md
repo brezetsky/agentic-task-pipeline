@@ -1,106 +1,52 @@
-# Architecture
+# Architecture and decisions
 
-## The layers
-
-| Layer | Choice | Why |
-| --- | --- | --- |
-| **Orchestration** | Temporal (TS SDK) | Durable workflows that pause arbitrarily long for human approval and survive process crashes; signals/queries map directly onto human-in-the-loop. |
-| **Backend** | Express + SSE | Boring and reviewable. Status is one-directional (server→UI) so SSE fits; decisions go back via plain `POST`. |
-| **Reasoning** | Vercel AI SDK (`ai`) + `@ai-sdk/google` (Gemini) | Brief-mandated (not LangChain); `generateObject` gives schema-validated plans. Gemini has a free tier. |
-| **Board** | Trello REST behind a `BoardProvider` interface | Simplest free board API; the interface keeps the source swappable. |
-| **Execution** | `simple-git` + `node:child_process` + GitHub REST (`fetch`) | Real branch/commit/push, a real test run, a real PR — each with a mock twin. |
-| **UI** | React + Vite | Clean SPA; the API serves the build in production (same origin, no CORS). |
-| **Infra** | docker-compose + Terraform (AWS) | One-command local stack; real, reviewable cloud IaC (unapplied). |
-
-Packages (npm workspaces): `core` (contracts + providers + config), `worker`
-(Temporal workflows + activities), `api` (Express), `web` (React).
-
-## Request flow
-
-```
-Board ──listTasks──▶ API ──start workflow──▶ Temporal ──schedules──▶ Worker
-                      ▲                          │                      │
-            POST /decision (signal)              │ activities           │ analyze/plan (LLM)
-                      │                           ▼                      ▼
-   UI ◀── SSE (getStatus query) ── API      condition() pause ◀── awaiting human ── implement/test/PR
+```mermaid
+flowchart LR
+  Board[Board adapter] --> API[Authenticated API]
+  API --> Workflow[Temporal workflow]
+  Workflow --> Context[Snapshot and retrieval]
+  Context --> Planner[Structured LLM planner]
+  Planner --> Policy[Deterministic policy]
+  Policy --> Human[Revision-bound human approval]
+  Human --> Git[Local Git edits]
+  Git --> Tests[Bounded test process]
+  Tests --> Receipt[Clean commit receipt]
+  Receipt --> PR[Push and draft PR]
+  Agent[External coding agent and skills] --> MCP[Read-only MCP]
+  MCP --> Context
+  MCP --> Policy
 ```
 
-The API holds a Temporal **client**; the worker hosts the **workflow + activities**.
-They share nothing but a few **name constants** in `core/contracts` (`WORKFLOW_TYPE`,
-the signal/query names), so the API never imports worker code.
+## Durable orchestration, deterministic boundary
 
-## Key decisions
+Workflow state and approval signals live in Temporal history. Workflows import only pure Zod contracts and activity types. ESLint enforces this seam; integration tests exercise actual workflow bundles, failures, revision limits, stale decisions, and worker restart/replay. Side effects run in activities with finite retries. `PolicyError` and permanent GitHub errors fail without repeated attempts; tests have cancellation and heartbeats independent of output.
 
-### 1. The determinism boundary (the load-bearing rule)
-Workflow code (`packages/worker/src/workflows/`) is deterministic: no network, no
-filesystem, no env reads — only activity calls, `condition()`/`sleep()`, and
-signal/query state. All side effects live in **activities**, which call the
-provider layer.
+Every accepted decision includes `planRevision`; only the first valid decision while waiting is accepted. The same approved plan is passed to implementation, with no second code generation. The task ID determines the workflow ID, and reuse is rejected even after completion. Approval can wait indefinitely by design; operators can terminate abandoned workflows using Temporal. This is not a TTL-based job queue.
 
-- Workflows reference activities by **type only**:
-  `import type * as activities` + `proxyActivities<typeof activities>(...)`. A value
-  import would drag `simple-git`/`ai`/`fs` into the deterministic V8 sandbox and
-  break bundling. (Verified: the workflow bundle contains only the workflow files
-  + `@temporalio/*`, no activity/provider code.)
-- Shared zod schemas live in a **side-effect-free leaf**, `@pipeline/core/contracts`.
-  Workflows import that subpath, never the package barrel (which reaches the
-  env-reading provider factory).
-- `Date.now()`/`Math.random()` are deterministic *inside* Temporal TS workflows
-  (the SDK overrides them), so timestamping history on the workflow side is safe.
+## Grounding and context budget
 
-### 2. Graceful degradation via an env-driven provider factory
-`core/providers` defines one interface per integration — `LlmProvider`,
-`BoardProvider`, `PrProvider` (+ a `GitWorkspace` and a test runner) — each with a
-real and a mock implementation. `create*Provider(config)` picks based on whether
-the relevant env vars are present. The factory reads `process.env` only in
-API/activity context, never in workflows. No credentials ⇒ every provider is the
-mock ⇒ the pipeline runs end-to-end on stubs.
+Prepare a per-run checkout of the configured base branch (or sanitized local source copy). Save its base commit and a deterministic corpus outside the checkout. Capture at most 100 files, 96 KB total, 32 KB per file, 2,000 directory entries, and depth 8. Exclude hidden directories, symlinks, common dependency/build trees, credential filenames, binary data, and unsupported extensions. Omitted content is represented by `truncated`, not silently assumed present.
 
-### 3. Durable human-in-the-loop
-The workflow registers a `submitDecision` signal and a `getStatus` query
-**synchronously at the top** (so buffered signals/early queries are handled), then
-`await condition(() => decision !== undefined)`. The revise loop is a bounded
-`while`: plan → wait → on `request-changes` reset the decision and re-plan with the
-feedback; on `approve` break; a `MAX_REVISIONS` guard prevents unbounded history.
-Decisions are accepted only while `state === 'awaiting-approval'`, so a stray or
-duplicate signal mid-replan is ignored. The `workflowId` is deterministic
-(`run-<taskId>`), so a double-submit collides instead of forking a second run.
+A simple lexical ranker favors filename matches and returns up to ten full files with SHA-256 citations. Gemini receives task/analysis plus selected source data and returns a schema-constrained plan. The UI exposes the captured corpus digest and size. Updating/deleting a file requires that it existed unchanged in the captured corpus. Files can still contain sensitive text under innocuous names: the operator must authorize the corpus for model/MCP access.
 
-**Crash-resume** works because the durable state (history + the pending signal)
-lives in the Temporal service + Postgres. The worker is a stateless, replaceable
-execution host: kill it at the approval pause, deliver the decision (recorded by
-the Temporal frontend with no worker running), restart the worker, and it replays
-history and continues.
+This is deliberately a small-repository retrieval baseline. No embeddings, vector database, reranker, or claimed semantic recall. `evals/cases.json` gives a tiny inspectable retrieval/policy regression set; it is not evidence of general RAG or live model quality.
 
-### 4. Idempotent, retry-safe side effects
-Temporal retries activities, so each is designed for at-least-once:
-- Deterministic branch `agent/<runId>`; the git activity starts from a clean
-  working copy so retries don't stack edits.
-- PR creation is **list-first** (return the existing PR if present) and treats
-  GitHub's `422 already exists` as success; a non-`422` 4xx becomes a
-  **non-retryable** `PrError` (the workflow lists it in `nonRetryableErrorTypes`)
-  so a bad token fails fast instead of hammering the API.
-- The test activity **heartbeats** its output and wires an `AbortSignal` to
-  Temporal cancellation, under a separate proxy group with a `heartbeatTimeout`.
+## Execution and publication
 
-### 5. Plan-carries-the-edits
-The LLM proposes the actual file edits *as part of the plan*. The human approves
-the real diff; "implement" just applies it. This avoids a second, divergent
-code-gen call on retry and makes the approval meaningful.
+`validatePlan` enforces limits independently of the model. The runtime planner may edit source/lib/docs or root Markdown, but cannot rewrite tests, dependency manifests, agent instructions, hidden files, or arbitrary paths. Only `npm test` and `node --test` are accepted and are spawned without a shell. Test processes receive a minimal environment and temporary HOME, have a deadline, and are killed as a process group on POSIX cancellation. Output is capped. This reduces accidental misuse; same-UID code execution still requires a trusted or separately isolated repository.
 
-### 6. Toolchain choices forced by reality
-The dev machine's default `node` is ancient and breaks corepack, so the repo uses
-**Node 22 + npm workspaces** (no pnpm/corepack), `module/moduleResolution:
-NodeNext`, CommonJS. `@octokit/rest` is now ESM-only, so GitHub uses the built-in
-`fetch` (dependency-light, no ESM/CJS friction); the test runner uses
-`node:child_process` rather than ESM-only `execa`.
+Implementation resets to the captured base, applies validated edits, and creates a local commit. Tests must pass without changing HEAD or tracked/untracked working-tree contents. A receipt records the tested commit outside the checkout. Publication checks that receipt and cleanliness again. Only then does it perform a normal push (no force) and list/create an idempotent draft PR. Remote divergence fails closed. Git credentials travel through per-process configuration, not clone URLs or stored remotes. Git hooks, external protocols, and global configuration are disabled using fixed settings.
 
-## Trade-offs / out of scope
+An interrupted push/PR creation can retry safely if the same commit exists. A failure after publication may still leave an existing draft PR; the run history exposes progress. Board reporting is best-effort, not a transactional outbox or exactly-once delivery.
 
-- Single-user, local-first: no auth, multi-tenancy, billing, or production secrets
-  management. The Terraform is written for review, not applied.
-- Activities share a local `.work/<runId>` directory across the implement and test
-  steps, which assumes one worker host (fine for local-first; a shared volume or a
-  single combined activity would generalize it).
-- One board provider (Trello) behind the interface — additional providers are out
-  of scope but the seam exists.
+## MCP and reusable skills
+
+The MCP v2 stdio server exports three read-only tools, a policy resource, and a review prompt over an operator-selected root. A real SDK client verifies protocol negotiation, discovery, retrieval, blocked paths, and the absence of an approval tool. Runtime policy is enforced even if a client ignores MCP annotations.
+
+The runtime planner uses context modules directly. External coding agents access those modules through MCP and can follow repository-local skills. This avoids introducing an unnecessary network/protocol dependency into the worker. There is one LLM planner with separate deterministic validation gates; this is not a claimed multi-agent deliberation system. Add an independent model reviewer only after measuring whether it catches failures that deterministic gates miss.
+
+## Operational scope
+
+API requests are bounded and validated, bearer authentication is available and required by default in production mode, and errors exclude internal provider bodies. Metadata logs carry request IDs and workflow transition data. `/api/health` is liveness; authenticated `/api/ready` checks Temporal connectivity, not worker availability or downstream providers.
+
+A deployment needs one worker host with persistent `.work` storage. Temporal durably stores orchestration, not filesystem bytes. Multiple workers on the same queue without shared/isolated execution storage are unsupported. See [operations](docs/OPERATIONS.md) for scaling, migration and production prerequisites.

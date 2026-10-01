@@ -21,7 +21,11 @@ export class PrError extends Error {
 export class MockPrProvider implements PrProvider {
   readonly name = 'mock';
   async openPr({ branch, title }: OpenPrArgs): Promise<PrResult> {
-    return { url: `https://example.invalid/pull/${encodeURIComponent(branch)}`, title, simulated: true };
+    return {
+      url: `https://example.invalid/pull/${encodeURIComponent(branch)}`,
+      title,
+      simulated: true,
+    };
   }
 }
 
@@ -49,10 +53,14 @@ export class GitHubPrProvider implements PrProvider {
   }
 
   private async findOpen(branch: string): Promise<PrResult | null> {
-    const res = await fetch(`${this.api}/pulls?head=${this.gh.owner}:${branch}&state=open`, {
-      headers: this.headers(),
-    });
-    if (!res.ok) return null;
+    const res = await fetch(
+      `${this.api}/pulls?${new URLSearchParams({ head: `${this.gh.owner}:${branch}`, state: 'open' })}`,
+      {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!res.ok) this.fail(res.status);
     const prs = (await res.json()) as GhPr[];
     const pr = prs[0];
     return pr ? { url: pr.html_url, number: pr.number, title: pr.title, simulated: false } : null;
@@ -65,7 +73,8 @@ export class GitHubPrProvider implements PrProvider {
     const res = await fetch(`${this.api}/pulls`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ title, head: branch, base, body }),
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({ title, head: branch, base, body, draft: true }),
     });
 
     if (res.ok) {
@@ -77,12 +86,15 @@ export class GitHubPrProvider implements PrProvider {
       if (again) return again;
       throw new PrError(`GitHub returned 422 but no open PR found for ${branch}.`);
     }
-    const text = await res.text().catch(() => '');
-    if (res.status >= 400 && res.status < 500) {
-      throw new PrError(`GitHub PR creation failed (${res.status}): ${text}`);
+    this.fail(res.status);
+  }
+
+  private fail(status: number): never {
+    // Do not include provider bodies: they may contain private repository data.
+    if (status >= 400 && status < 500 && ![408, 429].includes(status)) {
+      throw new PrError(`GitHub request rejected (${status})`);
     }
-    // 5xx / transient -> retryable (plain Error).
-    throw new Error(`GitHub PR creation failed (${res.status}): ${text}`);
+    throw new Error(`GitHub temporarily unavailable (${status})`);
   }
 }
 

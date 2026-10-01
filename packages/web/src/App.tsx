@@ -4,6 +4,8 @@ import type { Info, RunStatus, Task } from './types';
 import { RunDetail } from './RunDetail';
 
 export function App() {
+  const [error, setError] = useState('');
+  const [token, setToken] = useState('');
   const [info, setInfo] = useState<Info | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [runs, setRuns] = useState<RunStatus[]>([]);
@@ -17,8 +19,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    getInfo().then(setInfo).catch(() => {});
-    getTasks().then(setTasks).catch(() => {});
+    getInfo()
+      .then(setInfo)
+      .catch((e) => setError(e.message));
+    getTasks()
+      .then(setTasks)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -33,6 +39,8 @@ export function App() {
       const { runId } = await startRun(taskId);
       setSelected(runId);
       refreshRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start run');
     } finally {
       setStarting(null);
     }
@@ -47,9 +55,34 @@ export function App() {
             board → analyze → plan → <strong>human approves</strong> → implement → test → PR
           </div>
         </div>
-        {info && <span className={`mode ${info.mode}`}>{info.mode === 'live' ? 'LIVE' : 'MOCK MODE'}</span>}
+        {info && (
+          <span className={`mode ${info.mode}`}>{info.mode === 'live' ? 'LIVE' : 'MOCK MODE'}</span>
+        )}
       </header>
 
+      {error && (
+        <section role="alert">
+          <p>{error}</p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sessionStorage.setItem('pipeline-token', token);
+              window.location.reload();
+            }}
+          >
+            <label>
+              API access token{' '}
+              <input
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </label>
+            <button type="submit">Connect</button>
+          </form>
+        </section>
+      )}
       {info && (
         <div className="integrations">
           <span>
@@ -99,7 +132,9 @@ export function App() {
           {selected ? (
             <RunDetail runId={selected} onChange={refreshRuns} />
           ) : (
-            <div className="empty">Pick an inbound task and press “Start run”, then approve its plan here.</div>
+            <div className="empty">
+              Pick an inbound task and press “Start run”, then approve its plan here.
+            </div>
           )}
         </main>
       </div>

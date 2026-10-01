@@ -13,6 +13,8 @@ import {
   loadConfig,
   runTestCommand,
   workspaceDir,
+  validatePlan,
+  PolicyError,
 } from '@pipeline/core';
 import type {
   Analysis,
@@ -29,7 +31,11 @@ export async function analyzeTask(task: Task): Promise<Analysis> {
 }
 
 export async function proposePlan(args: PlanArgs): Promise<Plan> {
-  return createLlmProvider(loadConfig()).plan(args);
+  return validatePlan(await createLlmProvider(loadConfig()).plan(args));
+}
+
+export async function prepareWorkspace(runId: string) {
+  return new GitWorkspace(loadConfig()).prepare(runId);
 }
 
 export interface ImplementArgs {
@@ -37,11 +43,15 @@ export interface ImplementArgs {
   plan: Plan;
   runId: string;
 }
-export async function implementPlan({ task, plan, runId }: ImplementArgs): Promise<ImplementResult> {
+export async function implementPlan({
+  task,
+  plan,
+  runId,
+}: ImplementArgs): Promise<ImplementResult> {
   const cfg = loadConfig();
   const branch = `agent/${runId}`;
   const message = `agent: ${task.title}\n\n${plan.summary}`;
-  return new GitWorkspace(cfg).implement({ runId, branch, edits: plan.edits, message });
+  return new GitWorkspace(cfg).implement({ runId, branch, plan, message });
 }
 
 export interface RunTestsArgs {
@@ -50,10 +60,24 @@ export interface RunTestsArgs {
 }
 export async function runTests({ runId, testCommand }: RunTestsArgs): Promise<TestResult> {
   const ctx = Context.current();
-  return runTestCommand(workspaceDir(runId), testCommand, {
-    signal: ctx.cancellationSignal,
-    onLine: (line) => ctx.heartbeat(line),
-  });
+  const cfg = loadConfig();
+  if ((cfg.github.enabled || cfg.targetRepo.path) && !cfg.allowLocalExecution) {
+    throw new PolicyError(
+      'Custom repository execution requires ALLOW_LOCAL_EXECUTION=true on an isolated trusted host',
+    );
+  }
+  const workspace = new GitWorkspace(cfg);
+  const head = await workspace.head(runId);
+  const heartbeat = setInterval(() => ctx.heartbeat('tests running'), 10_000);
+  try {
+    const result = await runTestCommand(workspaceDir(runId), testCommand, {
+      signal: ctx.cancellationSignal,
+    });
+    if (result.passed) await workspace.recordTestSuccess(runId, head);
+    return result;
+  } finally {
+    clearInterval(heartbeat);
+  }
 }
 
 export interface OpenPrArgs {
@@ -62,8 +86,14 @@ export interface OpenPrArgs {
   branch: string;
   runId: string;
 }
-export async function openPullRequest({ task, plan, branch, runId }: OpenPrArgs): Promise<PrResult> {
+export async function openPullRequest({
+  task,
+  plan,
+  branch,
+  runId,
+}: OpenPrArgs): Promise<PrResult> {
   const cfg = loadConfig();
+  await new GitWorkspace(cfg).publish(runId, branch);
   const body = [
     `### ${task.title}`,
     '',
@@ -89,7 +119,13 @@ export interface ReportArgs {
   branch?: string;
   testsPassed?: boolean;
 }
-export async function reportResult({ task, runId, prUrl, branch, testsPassed }: ReportArgs): Promise<void> {
+export async function reportResult({
+  task,
+  runId,
+  prUrl,
+  branch,
+  testsPassed,
+}: ReportArgs): Promise<void> {
   const board = createBoardProvider(loadConfig());
   const text = `Agent Pipeline run ${runId}: ${prUrl ? `PR ${prUrl}` : 'no PR'}, tests ${
     testsPassed ? 'passed ✅' : 'failed ❌'

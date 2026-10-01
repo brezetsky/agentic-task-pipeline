@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { loadConfig, loadEnv } from '@pipeline/core';
 import * as activities from './activities/index.js';
@@ -17,6 +18,7 @@ async function connectWithRetry(address: string, attempts = 60): Promise<NativeC
 }
 
 async function main(): Promise<void> {
+  process.chdir(resolve(__dirname, '../../..'));
   loadEnv();
   const cfg = loadConfig();
   const connection = await connectWithRetry(cfg.temporal.address);

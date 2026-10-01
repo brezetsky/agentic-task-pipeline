@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getRun, sendDecision } from './api';
+import { getRun, getToken, sendDecision } from './api';
 import type { RunStatus } from './types';
 
 /**
@@ -10,19 +10,21 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
   const [status, setStatus] = useState<RunStatus | null>(null);
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     setStatus(null);
     let alive = true;
-    const es = new EventSource(`/api/runs/${runId}/events`);
-    es.onmessage = (e) => {
-      if (!e.data || e.data === '{}') return;
-      try {
-        setStatus(JSON.parse(e.data) as RunStatus);
-      } catch {
-        /* ignore */
-      }
-    };
+    const es = getToken() ? null : new EventSource(`/api/runs/${runId}/events`);
+    if (es)
+      es.onmessage = (e) => {
+        if (!e.data || e.data === '{}') return;
+        try {
+          setStatus(JSON.parse(e.data) as RunStatus);
+        } catch {
+          /* ignore */
+        }
+      };
     const poll = setInterval(() => {
       getRun(runId)
         .then((s) => alive && setStatus(s))
@@ -30,7 +32,7 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
     }, 2000);
     return () => {
       alive = false;
-      es.close();
+      es?.close();
       clearInterval(poll);
     };
   }, [runId]);
@@ -38,9 +40,17 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
   const decide = async (kind: 'approve' | 'request-changes') => {
     setBusy(true);
     try {
-      await sendDecision(runId, kind, kind === 'request-changes' ? feedback : undefined);
+      await sendDecision(
+        runId,
+        kind,
+        status!.revisions,
+        kind === 'request-changes' ? feedback : undefined,
+      );
       setFeedback('');
       onChange();
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Decision failed');
     } finally {
       setBusy(false);
     }
@@ -60,6 +70,13 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
         {status.branch ? ` · branch: ${status.branch}` : ''}
       </div>
 
+      {error && <p role="alert">{error}</p>}
+      {status.contextDigest && (
+        <p className="muted">
+          Context: {status.contextPaths?.length} files · snapshot{' '}
+          <code>{status.contextDigest.slice(0, 12)}</code>
+        </p>
+      )}
       {status.analysis && (
         <section>
           <h3>Analysis</h3>
@@ -110,7 +127,11 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
             <button className="approve-btn" disabled={busy} onClick={() => decide('approve')}>
               Approve
             </button>
-            <button className="changes-btn" disabled={busy} onClick={() => decide('request-changes')}>
+            <button
+              className="changes-btn"
+              disabled={busy}
+              onClick={() => decide('request-changes')}
+            >
               Request changes
             </button>
           </div>
@@ -123,7 +144,9 @@ export function RunDetail({ runId, onChange }: { runId: string; onChange: () => 
           <a href={status.prUrl} target="_blank" rel="noreferrer">
             {status.prUrl}
           </a>
-          {status.testsPassed != null && <> · tests {status.testsPassed ? 'passed ✅' : 'failed ❌'}</>}
+          {status.testsPassed != null && (
+            <> · tests {status.testsPassed ? 'passed ✅' : 'failed ❌'}</>
+          )}
         </section>
       )}
 

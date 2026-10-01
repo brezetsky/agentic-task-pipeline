@@ -1,40 +1,88 @@
-/**
- * Runs the project's test command in a working copy. Streams output lines to an
- * optional `onLine` callback (the activity wires this to Temporal heartbeats so
- * long suites don't time out) and supports cancellation via an AbortSignal.
- */
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { TestResult } from '../contracts/index.js';
+import { EXECUTION_POLICY, PolicyError } from '../policy.js';
 
 export interface RunTestOptions {
   signal?: AbortSignal;
   onLine?: (line: string) => void;
+  timeoutMs?: number;
 }
 
-export function runTestCommand(dir: string, command: string, opts: RunTestOptions = {}): Promise<TestResult> {
-  return new Promise((resolve) => {
-    const child = spawn('sh', ['-c', command], { cwd: dir, signal: opts.signal });
-    let output = '';
-
-    const onData = (chunk: Buffer) => {
-      const text = chunk.toString();
-      output += text;
-      for (const line of text.split('\n')) {
-        if (line.trim()) opts.onLine?.(line);
-      }
-    };
-    child.stdout?.on('data', onData);
-    child.stderr?.on('data', onData);
-
-    child.on('error', (err) => {
-      resolve({ passed: false, summary: `Could not run "${command}": ${err.message}`, output: output.slice(-4000) });
-    });
-    child.on('close', (code) => {
-      resolve({
-        passed: code === 0,
-        summary: code === 0 ? `Tests passed ("${command}").` : `Tests failed with exit code ${code}.`,
-        output: output.slice(-4000),
+/** Trusted repositories only: environment filtering and command policy are not an OS sandbox. */
+export async function runTestCommand(
+  dir: string,
+  command: string,
+  opts: RunTestOptions = {},
+): Promise<TestResult> {
+  if (!(EXECUTION_POLICY.testCommands as readonly string[]).includes(command))
+    throw new PolicyError('Test command is not allowed');
+  if (opts.signal?.aborted) return { passed: false, summary: 'Tests cancelled before start' };
+  const home = await mkdtemp(join(tmpdir(), 'pipeline-test-'));
+  try {
+    return await new Promise<TestResult>((resolve) => {
+      const [executable, ...args] = command.split(' ');
+      const child = spawn(executable, args, {
+        cwd: dir,
+        shell: false,
+        detached: process.platform !== 'win32',
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          CI: 'true',
+          NODE_ENV: 'test',
+          npm_config_ignore_scripts: 'true',
+          npm_config_cache: `${home}/.npm-cache`,
+        },
       });
+      let output = '';
+      let stopped = false;
+      let settled = false;
+      const kill = () => {
+        stopped = true;
+        try {
+          if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
+          else child.kill('SIGKILL');
+        } catch {
+          /* already exited */
+        }
+      };
+      const timer = setTimeout(kill, opts.timeoutMs ?? 120_000);
+      opts.signal?.addEventListener('abort', kill, { once: true });
+      // Cancellation may arrive during the asynchronous temporary-directory setup.
+      if (opts.signal?.aborted) kill();
+      const finish = (result: TestResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        opts.signal?.removeEventListener('abort', kill);
+        resolve(result);
+      };
+      const onData = (chunk: Buffer) => {
+        const text = chunk.toString();
+        output = (output + text).slice(-8000);
+        opts.onLine?.(text.slice(-1000));
+      };
+      child.stdout?.on('data', onData);
+      child.stderr?.on('data', onData);
+      child.on('error', () =>
+        finish({ passed: false, summary: 'Test process could not start', output }),
+      );
+      child.on('close', (code) =>
+        finish({
+          passed: !stopped && code === 0,
+          summary: stopped
+            ? 'Tests timed out or were cancelled'
+            : code === 0
+              ? 'Tests passed'
+              : `Tests failed with exit code ${code}`,
+          output,
+        }),
+      );
     });
-  });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }

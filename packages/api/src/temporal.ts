@@ -3,7 +3,12 @@
  * shared NAME constants (no dependency on the worker package) and stays
  * type-safe via the contracts in @pipeline/core.
  */
-import { Client, Connection, WorkflowExecutionAlreadyStartedError } from '@temporalio/client';
+import {
+  Client,
+  Connection,
+  WorkflowExecutionAlreadyStartedError,
+  WorkflowNotFoundError,
+} from '@temporalio/client';
 import {
   QUERY_GET_STATUS,
   SIGNAL_SUBMIT_DECISION,
@@ -18,11 +23,11 @@ import {
 
 let clientPromise: Promise<Client> | undefined;
 
-async function connectWithRetry(address: string, attempts = 60): Promise<Connection> {
+async function connectWithRetry(address: string, attempts = 3): Promise<Connection> {
   let lastErr: unknown;
   for (let i = 1; i <= attempts; i++) {
     try {
-      return await Connection.connect({ address });
+      return await Connection.connect({ address, connectTimeout: '3 seconds' });
     } catch (err) {
       lastErr = err;
       await new Promise((r) => setTimeout(r, 1000));
@@ -34,9 +39,12 @@ async function connectWithRetry(address: string, attempts = 60): Promise<Connect
 /** Lazily connect so the API boots even while Temporal is starting. */
 export async function getClient(cfg: AppConfig): Promise<Client> {
   if (!clientPromise) {
-    clientPromise = connectWithRetry(cfg.temporal.address).then(
-      (connection) => new Client({ connection, namespace: cfg.temporal.namespace }),
-    );
+    clientPromise = connectWithRetry(cfg.temporal.address)
+      .then((connection) => new Client({ connection, namespace: cfg.temporal.namespace }))
+      .catch((err) => {
+        clientPromise = undefined;
+        throw err;
+      });
   }
   return clientPromise;
 }
@@ -49,6 +57,7 @@ export async function startRun(cfg: AppConfig, task: Task): Promise<string> {
     const handle = await client.workflow.start<TaskPipelineWorkflow>(WORKFLOW_TYPE, {
       taskQueue: cfg.temporal.taskQueue,
       workflowId,
+      workflowIdReusePolicy: 'REJECT_DUPLICATE',
       args: [input],
     });
     return handle.workflowId;
@@ -62,29 +71,34 @@ export async function startRun(cfg: AppConfig, task: Task): Promise<string> {
 export async function getRunStatus(cfg: AppConfig, runId: string): Promise<RunStatus | null> {
   const client = await getClient(cfg);
   try {
-    return await client.workflow.getHandle(runId).query<RunStatus>(QUERY_GET_STATUS);
-  } catch {
-    // Worker unavailable (e.g. the crash-resume window) or query not yet registered.
-    return null;
+    return await client.connection.withDeadline(Date.now() + 5000, () =>
+      client.workflow.getHandle(runId).query<RunStatus>(QUERY_GET_STATUS),
+    );
+  } catch (error) {
+    if (error instanceof WorkflowNotFoundError) return null;
+    throw error;
   }
 }
 
-export async function sendDecision(cfg: AppConfig, runId: string, decision: Decision): Promise<void> {
+export async function sendDecision(
+  cfg: AppConfig,
+  runId: string,
+  decision: Decision,
+): Promise<void> {
   const client = await getClient(cfg);
-  await client.workflow.getHandle(runId).signal(SIGNAL_SUBMIT_DECISION, decision);
+  await client.connection.withDeadline(Date.now() + 5000, () =>
+    client.workflow.getHandle(runId).signal(SIGNAL_SUBMIT_DECISION, decision),
+  );
 }
 
 export async function listRuns(cfg: AppConfig, limit = 50): Promise<RunStatus[]> {
   const client = await getClient(cfg);
   const out: RunStatus[] = [];
-  try {
-    for await (const wf of client.workflow.list({ query: `WorkflowType = '${WORKFLOW_TYPE}'` })) {
-      const status = await getRunStatus(cfg, wf.workflowId);
-      if (status) out.push(status);
-      if (out.length >= limit) break;
-    }
-  } catch (err) {
-    console.error('[api] listRuns failed', err);
+  let scanned = 0;
+  for await (const wf of client.workflow.list({ query: `WorkflowType = '${WORKFLOW_TYPE}'` })) {
+    const status = await getRunStatus(cfg, wf.workflowId);
+    if (status) out.push(status);
+    if (++scanned >= limit) break;
   }
   return out;
 }
