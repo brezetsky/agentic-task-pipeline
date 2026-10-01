@@ -30,3 +30,9 @@ jobs:
       - run: docker compose config --quiet
       - run: docker build --target api -t agent-pipeline-api:ci .
       - run: docker build --target worker -t agent-pipeline-worker:ci .
+      - run: docker compose up -d --build
+      - run: docker compose exec -T api node --import tsx scripts/smoke.ts
+      - if: failure()
+        run: docker compose logs --tail 100
+      - if: always()
+        run: docker compose down

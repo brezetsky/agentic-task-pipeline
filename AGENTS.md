@@ -1,6 +1,6 @@
 # Agent Pipeline engineering context
 
-Read README.md for setup and ARCHITECTURE.md for trust boundaries before changing orchestration or execution.
+Read README.md for setup and trust boundaries before changing orchestration or execution.
 
 ## Architecture invariants
 
@@ -21,4 +21,4 @@ Reusable workflows live in `.agents/skills/pipeline-change/SKILL.md` and `.agent
 
 Keep changes within the requested task. Deployment, paid model calls, repository publication, and external comments need user authorization. Existing authorization takes precedence; do not ask twice. Do not install services or add frameworks just to increase the apparent agent feature count.
 
-No deployed compatibility is implied: workflow changes must either preserve replay with Temporal versioning/patching or document draining existing runs before rollout. Keep `docs/OPERATIONS.md` accurate.
+No deployed compatibility is implied: workflow changes must either preserve replay with Temporal versioning/patching or document draining existing runs before rollout. Keep the operating limits in `README.md` accurate.

@@ -3,7 +3,7 @@ name: pipeline-debug
 description: Diagnose stalled, rejected, or failed Agent Pipeline runs using Temporal state, execution policy, context snapshots, and validation evidence.
 ---
 
-Start with a run ID and its latest state from the API or Temporal history. Read `docs/OPERATIONS.md`. Avoid dumping task bodies, generated code, provider responses, or environment values into logs.
+Start with a run ID and its latest state from the API or Temporal history. Read the operating limits in `README.md`. Avoid dumping task bodies, generated code, provider responses, or environment values into logs.
 
 - `awaiting-approval`: compare the submitted `planRevision` with `revisions`. Stale or duplicate signals are ignored. An offline worker cannot answer workflow queries; a recorded signal can still be replayed.
 - `preparing` or `implementing`: inspect provider error type, workspace availability, and snapshot metadata. `PolicyError` means repair the proposed plan or configuration, not bypass validation. Never manually rewrite a test receipt.

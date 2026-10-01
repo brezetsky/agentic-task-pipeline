@@ -23,8 +23,9 @@
     "demo": "tsc -b && tsx scripts/demo.ts",
     "mcp": "node packages/mcp/dist/server.js",
     "lint": "eslint packages scripts evals",
-    "format": "prettier --write \"packages/**/*.{ts,tsx,json}\" \"scripts/**/*.ts\" \"evals/**/*.{ts,json}\" \"*.{json,md,yml,mjs,ts}\" \".github/**/*.yml\" \".agents/**/*.md\" \"docs/**/*.md\"",
-    "format:check": "prettier --check \"packages/**/*.{ts,tsx,json}\" \"scripts/**/*.ts\" \"evals/**/*.{ts,json}\" \"*.{json,md,yml,mjs,ts}\" \".github/**/*.yml\" \".agents/**/*.md\" \"docs/**/*.md\""
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json}\" \"scripts/**/*.ts\" \"evals/**/*.{ts,json}\" \"*.{json,md,yml,mjs,ts}\" \".github/**/*.yml\" \".agents/**/*.md\"",
+    "format:check": "prettier --check \"packages/**/*.{ts,tsx,json}\" \"scripts/**/*.ts\" \"evals/**/*.{ts,json}\" \"*.{json,md,yml,mjs,ts}\" \".github/**/*.yml\" \".agents/**/*.md\"",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
