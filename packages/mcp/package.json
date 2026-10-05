@@ -1,0 +1,18 @@
+{
+  "name": "@pipeline/mcp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@pipeline/core": "*",
+    "@modelcontextprotocol/server": "^2.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.2.0"
+  }
+}

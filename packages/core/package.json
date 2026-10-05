@@ -1,0 +1,29 @@
+{
+  "name": "@pipeline/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "default": "./dist/contracts/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^3.0.0",
+    "ai": "^6.0.0",
+    "dotenv": "^16.4.7",
+    "simple-git": "^3.36.0",
+    "zod": "^4.4.3"
+  }
+}

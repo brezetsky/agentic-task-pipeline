@@ -1,0 +1,16 @@
+# Terraform working files and STATE — never commit these.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variable files that hold real secrets (DB password, API keys). Commit only
+# the *.example template, never the filled-in values.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Plan output (can contain sensitive values).
+*.tfplan

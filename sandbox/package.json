@@ -1,0 +1,9 @@
+{
+  "name": "sandbox-target-repo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sample target repository the agent branches, edits, tests, and opens PRs against (the default when no real GitHub repo is configured).",
+  "scripts": {
+    "test": "node --test"
+  }
+}

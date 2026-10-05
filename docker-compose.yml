@@ -1,0 +1,109 @@
+# Local stack: Postgres, Temporal, worker, API and web UI.
+name: agent-pipeline
+
+services:
+  # Preload the operator-selected image; task containers never pull images themselves.
+  runner-image:
+    image: ${TEST_RUNNER_IMAGE:-node:22-slim}
+    entrypoint: ['/bin/true']
+    network_mode: none
+    read_only: true
+    user: '1000:1000'
+
+  postgresql:
+    image: postgres:16
+    container_name: ap-postgresql
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    expose:
+      - 5432
+    volumes:
+      - temporal-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U temporal']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.29.1
+    container_name: ap-temporal
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    ports:
+      - '127.0.0.1:7233:7233'
+    volumes:
+      - ./infra/dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    container_name: ap-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:${TEMPORAL_UI_PORT:-8080}
+    ports:
+      - '127.0.0.1:${TEMPORAL_UI_PORT:-8080}:8080'
+
+  # --- App services. Credentials (if any) come from an optional root .env;
+  #     with none set the pipeline runs end-to-end on mocks. ---
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: ap-worker
+    environment:
+      - API_ALLOW_UNAUTHENTICATED=true # local demo only; ports bind to loopback
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=agent-pipeline
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      temporal:
+        condition: service_started
+      runner-image:
+        condition: service_completed_successfully
+    restart: on-failure
+    volumes:
+      - worker-work:/app/.work
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add: ['${DOCKER_SOCKET_GID:-0}']
+    init: true
+    security_opt: ['no-new-privileges:true']
+
+  api:
+    build:
+      context: .
+      target: api
+    container_name: ap-api
+    environment:
+      - API_ALLOW_UNAUTHENTICATED=true # local demo only; ports bind to loopback
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=agent-pipeline
+      - API_PORT=3001
+      - API_HOST=0.0.0.0
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - '127.0.0.1:3001:3001'
+    depends_on:
+      - temporal
+    restart: on-failure
+
+volumes:
+  worker-work:
+  temporal-pg:

@@ -1,0 +1,42 @@
+name: Quality gates
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run demo
+      - run: npm audit --audit-level=high
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose config --quiet
+      - run: docker build --target api -t agent-pipeline-api:ci .
+      - run: docker build --target worker -t agent-pipeline-worker:ci .
+      - run: docker pull node:22-slim
+      - name: Match the Linux Docker socket group for the non-root worker
+        run: echo "DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)" >> "$GITHUB_ENV"
+      - run: docker compose up -d --build
+      - run: docker compose exec -T api node --import tsx scripts/smoke.ts
+      - run: docker compose exec -T -e RUN_DOCKER_TESTS=1 worker node node_modules/vitest/vitest.mjs run packages/core/src/providers/docker-runner.test.ts
+      - if: failure()
+        run: docker compose logs --tail 100
+      - if: always()
+        run: docker compose down
