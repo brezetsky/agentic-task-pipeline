@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@pipeline/core": "*",
-    "@modelcontextprotocol/server": "^2.2.0",
+    "@modelcontextprotocol/server": "^2.3.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
